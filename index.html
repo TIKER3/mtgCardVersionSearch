@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Card Search (Artist View)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        .search-container {
+            text-align: center;
+            margin-bottom: 30px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        input[type="text"] {
+            padding: 10px;
+            font-size: 16px;
+            width: 300px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #633394;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #4b2571;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .hint {
+            display: block;
+            margin-top: 5px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        #status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+            min-height: 24px;
+        }
+        /* Grid Layout */
+        #results {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 20px;
+        }
+        .card-item {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: transform 0.2s;
+        }
+        .card-item:hover {
+            transform: translateY(-5px);
+        }
+        .card-item img {
+            width: 100%;
+            height: auto;
+            border-radius: 4.75% / 3.5%;
+        }
+        .info-area {
+            margin-top: 10px;
+            font-size: 0.85em;
+            color: #555;
+            text-align: left;
+            border-top: 1px solid #eee;
+            padding-top: 8px;
+        }
+        .set-name {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 4px;
+        }
+        .artist-name {
+            color: #555;
+            font-style: italic;
+        }
+        .artist-label {
+            font-style: normal;
+            font-weight: bold;
+            color: #888;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>MTG Card Version & Artist Gallery</h1>
+
+    <div class="search-container">
+        <input type="text" id="cardNameInput" placeholder="例: Lightning Bolt" onkeypress="handleEnter(event)">
+        <button id="searchBtn" onclick="searchCards()">検索</button>
+        <span class="hint">※正確な検索のため、英語名での入力を推奨します (例: Birds of Paradise)</span>
+    </div>
+
+    <div id="status"></div>
+    <div id="results"></div>
+
+    <script>
+        // APIマナーのためのWait関数 (msミリ秒待機)
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        async function searchCards() {
+            const input = document.getElementById('cardNameInput').value.trim();
+            const resultsDiv = document.getElementById('results');
+            const statusDiv = document.getElementById('status');
+            const searchBtn = document.getElementById('searchBtn');
+
+            if (!input) {
+                alert("カード名を入力してください");
+                return;
+            }
+
+            // 初期化 & ロック
+            resultsDiv.innerHTML = '';
+            statusDiv.textContent = '検索を開始します...';
+            statusDiv.style.color = 'black';
+            searchBtn.disabled = true;
+
+            try {
+                const query = `!"${input}" unique:prints`;
+                const encodedQuery = encodeURIComponent(query);
+                
+                // 最初のURL
+                let nextUrl = `https://api.scryfall.com/cards/search?q=${encodedQuery}&order=released&dir=asc`;
+                let allCards = [];
+                let pageCount = 0;
+
+                // ページネーション対応ループ
+                while (nextUrl) {
+                    pageCount++;
+                    statusDiv.textContent = `データ取得中... (ページ ${pageCount})`;
+
+                    const response = await fetch(nextUrl);
+
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            if (pageCount === 1) throw new Error("カードが見つかりませんでした。");
+                        } else if (response.status === 429) {
+                             throw new Error("アクセス過多です(429)。しばらく時間を置いてください。");
+                        } else {
+                            throw new Error(`APIエラー: ${response.status}`);
+                        }
+                    }
+
+                    const data = await response.json();
+                    allCards = allCards.concat(data.data);
+
+                    if (data.has_more && data.next_page) {
+                        nextUrl = data.next_page;
+                        await sleep(100); // Wait 100ms
+                    } else {
+                        nextUrl = null;
+                    }
+                }
+
+                statusDiv.textContent = `${allCards.length} 枚のバージョンが見つかりました`;
+
+                renderCards(allCards, resultsDiv);
+
+            } catch (error) {
+                statusDiv.textContent = error.message;
+                statusDiv.style.color = 'red';
+                console.error(error);
+            } finally {
+                searchBtn.disabled = false;
+            }
+        }
+
+        function renderCards(cards, container) {
+            cards.forEach(card => {
+                let imageUrl = null;
+
+                // 画像URL取得
+                if (card.image_uris && card.image_uris.normal) {
+                    imageUrl = card.image_uris.normal;
+                } else if (card.card_faces && card.card_faces[0].image_uris) {
+                    imageUrl = card.card_faces[0].image_uris.normal;
+                }
+
+                if (imageUrl) {
+                    const cardDiv = document.createElement('div');
+                    cardDiv.className = 'card-item';
+                    
+                    // セット情報
+                    const setInfo = `${card.set_name} (${card.set.toUpperCase()}) #${card.collector_number}`;
+                    
+                    // イラストレーター情報
+                    // APIレスポンスの 'artist' フィールドを使用
+                    const artistName = card.artist || "Unknown";
+
+                    cardDiv.innerHTML = `
+                        <img src="${imageUrl}" alt="${card.name}" loading="lazy">
+                        <div class="info-area">
+                            <div class="set-name">${setInfo}</div>
+                            <div class="artist-name">
+                                <span class="artist-label">Illus.</span> ${artistName}
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(cardDiv);
+                }
+            });
+        }
+
+        function handleEnter(event) {
+            if (event.key === 'Enter') {
+                document.getElementById('searchBtn').click();
+            }
+        }
+    </script>
+
+</body>
+</html>
